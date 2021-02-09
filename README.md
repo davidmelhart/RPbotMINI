@@ -24,3 +24,9 @@ Finally you can speak as a random NPC with this syntax: `!npc NPC_name message` 
 You can use uploads as well to create handouts. Comments and the file will be sent as separate messages. The file itself won't have a portrait attached but will still have the name and colour of the character.
 
 The bot cleans up after itself, if a command is successful, you should see it disappear. There is some minimal error handling through DMs. DM messages are kept for **one minute** after which they are automatically deleted. If for some reason the messages stick, you can use the `!purge` command in the bot DMs to clear the last 100 messages sent by the bot.
+
+## Installation
+- Create a new application on the Discord developer portal https://discord.com/developers/applications
+- Add the bot to your guild
+- Create a `.env` file and add the following line using your bot token: `DISCORD_TOKEN="your_token"`
+- Run `bot.py` :)
