@@ -25,7 +25,7 @@ if os.path.exists('characters.json'):
 
 @bot.event
 async def on_ready():
-    print("Ready!")
+    print("Ready!\n")
     for guild in bot.guilds:
         try:
             characters[str(guild.id)]
@@ -33,6 +33,7 @@ async def on_ready():
             characters[str(guild.id)] = {}
     print('Character Database:')
     print(json.dumps(characters, indent=2))
+    print()
 
 
 @bot.command(name='register')
@@ -75,6 +76,7 @@ async def register(ctx, character_name, portrait: typing.Optional[str], color: t
         json.dump(characters, fp)
     print('Character Database Updated!')
     print(json.dumps(characters, indent=2))
+    print()
 
 
 @bot.command(name='list')
@@ -135,6 +137,7 @@ async def clear_channel(ctx):
         json.dump(characters, fp)
     print('Character Database Updated!')
     print(json.dumps(characters, indent=2))
+    print()
 
 
 @bot.command(name='delete')
@@ -153,6 +156,7 @@ async def delete_user(ctx):
         json.dump(characters, fp)
     print('Character Database Updated!')
     print(json.dumps(characters, indent=2))
+    print()
 
 
 @bot.command(name='unregister')
@@ -187,6 +191,7 @@ async def unregister(ctx, character_name):
         json.dump(characters, fp)
     print('Character Database Updated!')
     print(json.dumps(characters, indent=2))
+    print()
 
 
 @bot.command(name='as')
