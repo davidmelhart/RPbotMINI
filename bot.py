@@ -73,6 +73,8 @@ async def register(ctx, character_name, portrait: typing.Optional[str], color: t
 
     with open('characters.json', 'w') as fp:
         json.dump(characters, fp)
+    print('Character Database Updated!')
+    print(json.dumps(characters, indent=2))
 
 
 @bot.command(name='list')
@@ -131,6 +133,8 @@ async def clear_channel(ctx):
 
     with open('characters.json', 'w') as fp:
         json.dump(characters, fp)
+    print('Character Database Updated!')
+    print(json.dumps(characters, indent=2))
 
 
 @bot.command(name='delete')
@@ -147,6 +151,8 @@ async def delete_user(ctx):
 
     with open('characters.json', 'w') as fp:
         json.dump(characters, fp)
+    print('Character Database Updated!')
+    print(json.dumps(characters, indent=2))
 
 
 @bot.command(name='unregister')
@@ -179,6 +185,8 @@ async def unregister(ctx, character_name):
 
     with open('characters.json', 'w') as fp:
         json.dump(characters, fp)
+    print('Character Database Updated!')
+    print(json.dumps(characters, indent=2))
 
 
 @bot.command(name='as')
