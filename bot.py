@@ -52,7 +52,7 @@ async def register(ctx, character_name, portrait: typing.Optional[str], color: t
 
     guild = str(ctx.guild.id)
     channel = str(ctx.message.channel.id)
-    user = '{}'.format(ctx.message.author.id)
+    user = str(ctx.message.author.id)
 
     character = {
         "name": character_name,
@@ -84,9 +84,9 @@ async def character_list(ctx, user_name: typing.Optional[discord.Member]):
     guild = str(ctx.guild.id)
     channel = str(ctx.message.channel.id)
     if not user_name:
-        user = '{}'.format(ctx.message.author.id)
+        user = str(ctx.message.author.id)
     else:
-        user = '{}'.format(user_name.id)
+        user = str(user_name.id)
 
     try:
         c_list = characters[guild][channel][user]['characters']
@@ -125,7 +125,7 @@ async def character_list(ctx, user_name: typing.Optional[discord.Member]):
 async def clear_channel(ctx):
     guild = str(ctx.guild.id)
     channel = str(ctx.message.channel.id)
-    user = '{}'.format(ctx.message.author.id)
+    user = str(ctx.message.author.id)
     try:
         del characters[guild][channel][user]
     except KeyError:
@@ -143,7 +143,7 @@ async def clear_channel(ctx):
 @bot.command(name='delete')
 async def delete_user(ctx):
     guild = str(ctx.guild.id)
-    user = '{}'.format(ctx.message.author.id)
+    user = str(ctx.message.author.id)
 
     for channel in characters[guild].keys():
         try:
@@ -163,7 +163,7 @@ async def delete_user(ctx):
 async def unregister(ctx, character_name):
     guild = str(ctx.guild.id)
     channel = str(ctx.message.channel.id)
-    user = '{}'.format(ctx.message.author.id)
+    user = str(ctx.message.author.id)
 
     try:
         del characters[guild][channel][user]["characters"][character_name]
@@ -198,7 +198,7 @@ async def unregister(ctx, character_name):
 async def speak_as(ctx, character_name):
     guild = str(ctx.guild.id)
     channel = str(ctx.message.channel.id)
-    user = '{}'.format(ctx.message.author.id)
+    user = str(ctx.message.author.id)
     try:
         characters[guild][channel][user]['as'] = characters[guild][channel][user]['characters'][character_name]['name']
     except KeyError:
@@ -215,7 +215,7 @@ async def speak_as(ctx, character_name):
 async def activate(ctx):
     guild = str(ctx.guild.id)
     channel = str(ctx.message.channel.id)
-    user = '{}'.format(ctx.message.author.id)
+    user = str(ctx.message.author.id)
     try:
         characters[guild][channel][user]['active'] = True
     except KeyError:
@@ -228,7 +228,7 @@ async def activate(ctx):
 async def deactivate(ctx):
     guild = str(ctx.guild.id)
     channel = str(ctx.message.channel.id)
-    user = '{}'.format(ctx.message.author.id)
+    user = str(ctx.message.author.id)
     try:
         characters[guild][channel][user]['active'] = False
     except KeyError:
@@ -255,7 +255,7 @@ async def on_message(message):
         if not message.content.startswith("!"):
             guild = str(message.guild.id)
             channel = str(message.channel.id)
-            user = '{}'.format(message.author.id)
+            user = str(message.author.id)
 
             try:
                 user_data = characters[guild][channel][user]
