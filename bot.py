@@ -1,12 +1,15 @@
+import discord
+from discord.commands import Option
+from discord import interactions
+
 import os
 import json
-import discord
 import random
 import typing
 import colorsys
-from discord.ext import commands
 from dotenv import load_dotenv
-from discord.ext.commands import CommandNotFound
+from enum import Enum
+
 
 clean_id = ['<', '@', '!', '>']
 
@@ -15,12 +18,12 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 
 intents = discord.Intents.all()
 client = discord.Client(intents=intents)
-bot = commands.Bot(command_prefix='!')
+bot = discord.Bot()
 
-characters = {}
+_character_db = {}
 if os.path.exists('characters.json'):
     with open('characters.json', 'r') as fp:
-        characters = json.load(fp)
+        _character_db = json.load(fp)
 
 
 @bot.event
@@ -28,278 +31,330 @@ async def on_ready():
     print("Ready!\n")
     for guild in bot.guilds:
         try:
-            characters[str(guild.id)]
+            _character_db[str(guild.id)]
         except KeyError:
-            characters[str(guild.id)] = {}
+            _character_db[str(guild.id)] = {}
     print('Character Database:')
-    print(json.dumps(characters, indent=2))
+    print(json.dumps(_character_db, indent=2))
     print()
 
 
-@bot.command(name='register')
-async def register(ctx, character_name, portrait: typing.Optional[str], color: typing.Optional[str]):
-    if not color:
-        h, s, l = random.random(), random.uniform(0.5, 0.7), random.uniform(0.5, 0.7)
-        r, g, b = [int(256 * i) for i in colorsys.hls_to_rgb(h, l, s)]
-        color = "{0:02x}{1:02x}{2:02x}".format(r, g, b)
-    elif color.startswith("#"):
-        color = color[1:]
+class RegisterModal(discord.ui.Modal):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
 
-    if not portrait:
-        portrait = 'https://cdn.discordapp.com/embed/avatars/1.png'
-    elif not portrait.startswith('http'):
-        portrait = 'https://cdn.discordapp.com/embed/avatars/1.png'
+        self.add_item(discord.ui.InputText(label="Name"))
+        self.add_item(discord.ui.InputText(label="Color", required=False))
+        self.add_item(discord.ui.InputText(label="Portrait", required=False))
 
+    async def callback(self, interaction: discord.Interaction):
+        name = self.children[0].value
+        color = self.children[1].value
+        portrait = self.children[2].value
+        await register_character(interaction, name, color, portrait)
+
+
+class UpdateModal(discord.ui.Modal):
+    def __init__(self, guild, channel, user, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.guild = guild
+        self.channel = channel
+        self.user = user
+
+        current_character = _character_db[guild][channel][user]["characters"][_character_db[guild][channel][user]['as']]
+
+        self.add_item(discord.ui.InputText(label="Name", value=current_character['name']))
+        self.add_item(discord.ui.InputText(label="New Name", required=False))
+        self.add_item(discord.ui.InputText(label="Color", value=current_character['color'], required=False))
+        self.add_item(discord.ui.InputText(label="Portrait", value=current_character['portrait'], required=False))
+
+    async def callback(self, interaction: discord.Interaction):
+        name = self.children[0].value
+        new_name = self.children[1].value
+        color = self.children[2].value
+        portrait = self.children[3].value
+        await update_character(interaction, name, color, portrait, new_name)
+
+
+class SelectButton(discord.ui.View):
+    def __init__(self, character_name):
+        super().__init__(timeout=None)
+        self.character_name = character_name
+
+    @discord.ui.button(label="Select Character", custom_id="select", style=discord.ButtonStyle.secondary)
+    async def button_callback(self, button, interaction):
+        await switch_character(interaction, self.character_name)
+
+
+@bot.slash_command(name='register', description='Register a new character')
+async def register(ctx: discord.ApplicationContext):
+    modal = RegisterModal(title="Register New Character")
+    await ctx.send_modal(modal)
+
+
+@bot.slash_command(name='update', description='Register a new character')
+async def update(ctx: discord.ApplicationContext):
     guild = str(ctx.guild.id)
-    channel = str(ctx.message.channel.id)
-    user = str(ctx.message.author.id)
+    channel = str(ctx.channel.id)
+    user = str(ctx.user.id)
+    modal = UpdateModal(title="Update Character", guild=guild, channel=channel, user=user)
+    await ctx.send_modal(modal)
+
+
+@bot.slash_command(name='list', description='List your characters registered on the channel')
+async def list_characters(ctx: discord.ApplicationContext):
+    guild = str(ctx.guild.id)
+    channel = str(ctx.channel.id)
+    user = str(ctx.user.id)
+    character_list = _character_db[guild][channel][user]["characters"]
+
+    for character_name in character_list:
+        character = character_list[character_name]
+
+        select = SelectButton(character_name)
+
+        embed = discord.Embed(description="", color=int(f"0x{character['color']}", 16))
+        embed.set_thumbnail(url=character['portrait'])
+        embed.set_author(name=f"{character['name']}"
+                              f"{' is active.' if character_name == _character_db[guild][channel][user]['as'] else ''}")
+        await ctx.respond(embed=embed, view=select, ephemeral=True)
+
+
+@bot.slash_command(name='switch', description='Switch to character!')
+async def switch(ctx: discord.ApplicationContext, to_character: Option(str, "Switch to character!", required=False, default='')):
+    await switch_character(ctx, to_character)
+
+
+@bot.slash_command(name='s', description='Say something in-character!')
+async def say(ctx: discord.ApplicationContext, message: Option(str, "Say something in-character!", required=False, default='')):
+    await send_message(ctx, message=message, message_type="says:", action="", wrapper="", bold=False, italic=False)
+
+
+@bot.slash_command(name='w', description='Whisper something in-character!')
+async def whisper(ctx: discord.ApplicationContext, message: Option(str, "Whisper something in-character!", required=False, default='')):
+    await send_message(ctx, message=message, message_type="whispers:", action="", wrapper="~", bold=False, italic=True)
+
+
+@bot.slash_command(name='a', description='Act in-character!')
+async def action(ctx: discord.ApplicationContext,
+                 action: Option(str, "Act in-character!", required=False, default=''),
+                 message: Option(str, "Say something in-character!", required=False, default='')):
+    await send_message(ctx, message=message, message_type="", action=action, wrapper="", bold=False, italic=False)
+
+
+@bot.slash_command(name='as', description='Act as an NPC!')
+async def as_npc(ctx: discord.ApplicationContext,
+                 name: Option(str, "NPC name", required=True, default=''),
+                 message: Option(str, "Say something as NPC!", required=False, default=''),
+                 action: Option(str, "Act as NPC!", required=False, default='')):
+    guild = str(ctx.guild.id)
+    channel = str(ctx.channel.id)
+    user = str(ctx.author.id)
+
+    setup_user(guild, channel, user)
+
+    if name not in _character_db[guild][channel][user]["npcs"]:
+        character = {
+            "name": name,
+            "color": check_color(''),
+        }
+        _character_db[guild][channel][user]["npcs"][name] = character
+        with open('characters.json', 'w') as fp:
+            json.dump(_character_db, fp)
+    else:
+        character = _character_db[guild][channel][user]["npcs"][name]
+
+    await send_message(ctx, message=message, message_type="", action=action, wrapper="", bold=False, italic=False,
+                       as_character=character)
+
+
+@bot.slash_command(name='narrate', description='Add narration!')
+async def narrate(ctx: discord.ApplicationContext, message: Option(str, "Add narration!", required=True, default='')):
+    message = message.capitalize()
+    message = f"{message}." if message[-1] not in [".", "!", "?", ':', '-'] else message
+
+    embed = discord.Embed(description="", color=int(f"0x{'2f3136'}", 16))
+    embed.set_author(name=f"{message}")
+    await ctx.defer()
+    await ctx.delete()
+    await ctx.channel.send(embed=embed)
+
+
+async def send_message(ctx, message="", message_type="", action="", wrapper="", bold=False, italic=False,
+                       as_character=None):
+    try:
+        guild = str(ctx.guild.id)
+        channel = str(ctx.channel.id)
+        user = _character_db[guild][channel][str(ctx.author.id)]
+
+        if as_character is None:
+            character = user["characters"][user['as']]
+        else:
+            character = as_character
+
+        if len(message) > 0:
+            message = message.capitalize()
+            message = f"{message}." if message[-1] not in [".", "!", "?", ':', '-'] else message
+        if len(action) > 0:
+            action = f"{action}." if action[-1] not in [".", "!", "?", ':', '-'] else action
+
+        if action == "" and message_type == "":
+            message_type = "says:"
+
+        if italic:
+            message = f"*{message}*"
+        if bold:
+            message = f"**{message}**"
+
+        embed = discord.Embed(description=f"{wrapper}{message}{wrapper}", color=int(f"0x{character['color']}", 16))
+        if 'portrait' in character:
+            embed.set_thumbnail(url=character['portrait'])
+        embed.set_author(name=f"{character['name']} {message_type}{action}")
+        await ctx.defer()
+        await ctx.delete()
+        await ctx.channel.send(embed=embed)
+    except KeyError:
+        await ctx.respond("Cannot find character! \n"
+                          "Please use `/list` to view your current characters. \n"
+                          "If you have no characters in the current channel, "
+                          "you can create one with the `/register` command", ephemeral=True)
+
+
+async def register_character(interaction, name, color, portrait):
+    guild = str(interaction.guild.id)
+    channel = str(interaction.channel.id)
+    user = str(interaction.user.id)
+
+    setup_user(guild, channel, user)
+
+    color = check_color(color)
+
+    if portrait == "" or not portrait.startswith('http'):
+        portrait = 'https://cdn.discordapp.com/embed/avatars/1.png'
 
     character = {
-        "name": character_name,
+        "name": name,
         "portrait": portrait,
         "color": color,
     }
 
-    if channel not in characters[guild]:
-        characters[guild][channel] = {}
+    if name not in _character_db[guild][channel][user]["characters"]:
+        _character_db[guild][channel][user]["characters"][name] = character
+        _character_db[guild][channel][user]['as'] = name
 
-    if user not in characters[guild][channel]:
-        characters[guild][channel][user] = {}
-        characters[guild][channel][user]['characters'] = {}
+        embed = discord.Embed(description="", color=int(f"0x{color}", 16))
+        embed.set_thumbnail(url=portrait)
+        embed.set_author(name=f"{name} enters the scene.")
 
-    characters[guild][channel][user]['active'] = True
-    characters[guild][channel][user]["characters"][character_name] = character
-    characters[guild][channel][user]['as'] = character_name
-    await ctx.message.delete()
-
-    with open('characters.json', 'w') as fp:
-        json.dump(characters, fp)
-    print('Character Database Updated!')
-    print(json.dumps(characters, indent=2))
-    print()
-
-
-@bot.command(name='list')
-async def character_list(ctx, user_name: typing.Optional[discord.Member]):
-    guild = str(ctx.guild.id)
-    channel = str(ctx.message.channel.id)
-    if not user_name:
-        user = str(ctx.message.author.id)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
-        user = str(user_name.id)
-
-    try:
-        c_list = characters[guild][channel][user]['characters']
-        if len(c_list) > 0:
-            if not user_name:
-                await ctx.message.author.send("Your characters registered on {}:"
-                                              .format(ctx.message.channel.name), delete_after=60)
-            else:
-                await ctx.message.author.send("Characters of {} registered on {}:"
-                                              .format(user_name.display_name, ctx.message.channel.name), delete_after=60)
-            for c in c_list:
-                character = c_list[c]
-                embed = discord.Embed(color=int("0x{}".format(character['color']), 16))
-                embed.set_thumbnail(url=character['portrait'])
-                embed.set_author(name=character['name'])  # icon_url=character['portrait']
-
-                await ctx.message.author.send(embed=embed, delete_after=60)
-        else:
-            if not user_name:
-                await ctx.message.author.send("You have no characters registered on {}."
-                                              .format(ctx.message.channel.name), delete_after=60)
-            else:
-                await ctx.message.author.send("{} has no characters registered on {}."
-                                              .format(user_name.display_name, ctx.message.channel.name), delete_after=60)
-    except KeyError:
-        if not user_name:
-            await ctx.message.author.send("You have no characters registered on {}."
-                                          .format(ctx.message.channel.name), delete_after=60)
-        else:
-            await ctx.message.author.send("{} has no characters registered on {}."
-                                          .format(user_name.display_name, ctx.message.channel.name), delete_after=60)
-    await ctx.message.delete()
-
-
-@bot.command(name='clear')
-async def clear_channel(ctx):
-    guild = str(ctx.guild.id)
-    channel = str(ctx.message.channel.id)
-    user = str(ctx.message.author.id)
-    try:
-        del characters[guild][channel][user]
-    except KeyError:
-        await ctx.message.author.send("You have no characters registered on {}."
-                                      .format(ctx.message.channel.name), delete_after=60)
-    await ctx.message.delete()
-
+        as_character = _character_db[guild][channel][str(interaction.user.id)]
+        character = as_character["characters"][as_character['as']]
+        embed = discord.Embed(description="Use `/update` to update the character.",
+                              color=int(f"0x{character['color']}", 16))
+        embed.set_thumbnail(url=character['portrait'])
+        embed.set_author(name=f"{character['name']} already exists in this channel.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
     with open('characters.json', 'w') as fp:
-        json.dump(characters, fp)
-    print('Character Database Updated!')
-    print(json.dumps(characters, indent=2))
-    print()
+        json.dump(_character_db, fp)
 
 
-@bot.command(name='delete')
-async def delete_user(ctx):
-    guild = str(ctx.guild.id)
-    user = str(ctx.message.author.id)
+async def update_character(interaction, name, color, portrait, new_name):
+    guild = str(interaction.guild.id)
+    channel = str(interaction.channel.id)
+    user = str(interaction.user.id)
 
-    for channel in characters[guild].keys():
-        try:
-            del characters[guild][channel][user]
-        except KeyError:
-            pass
-    await ctx.message.delete()
+    setup_user(guild, channel, user)
 
+    if name in _character_db[guild][channel][user]["characters"]:
+        if portrait != "" and portrait.startswith('http'):
+            _character_db[guild][channel][user]["characters"][name]['portrait'] = portrait
+        if color != "":
+            _character_db[guild][channel][user]["characters"][name]['color'] = check_color(color)
+        if new_name != "":
+            character = _character_db[guild][channel][user]["characters"][name]
+            _character_db[guild][channel][user]["characters"][new_name] = character
+            _character_db[guild][channel][user]["characters"][new_name]["name"] = new_name
+            _character_db[guild][channel][user]['as'] = new_name
+
+            del _character_db[guild][channel][user]["characters"][name]
+            name = new_name
+
+        character = _character_db[guild][channel][user]["characters"][name]
+
+        embed = discord.Embed(description="", color=int(f"0x{character['color']}", 16))
+        embed.set_thumbnail(url=character['portrait'])
+        embed.set_author(name=f"{character['name']} has been updated.")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        await interaction.response.send_message("Cannot find character! \n"
+                                                "Please use `/list` to view your current characters. \n"
+                                                "If you have no characters in the current channel, "
+                                                "you can create one with the `/register` command", ephemeral=True)
     with open('characters.json', 'w') as fp:
-        json.dump(characters, fp)
-    print('Character Database Updated!')
-    print(json.dumps(characters, indent=2))
-    print()
+        json.dump(_character_db, fp)
 
 
-@bot.command(name='unregister')
-async def unregister(ctx, character_name):
-    guild = str(ctx.guild.id)
-    channel = str(ctx.message.channel.id)
-    user = str(ctx.message.author.id)
+async def switch_character(interaction, to_character):
+    guild = str(interaction.guild.id)
+    channel = str(interaction.channel.id)
+    user = str(interaction.user.id)
+    _character_db[guild][channel][user]['as'] = to_character
 
-    try:
-        del characters[guild][channel][user]["characters"][character_name]
-        character_list = characters[guild][channel][user]["characters"]
-        if characters[guild][channel][user]["as"] == character_name and len(character_list) > 0:
-            random_character = character_list[random.choice(list(character_list.keys()))]
-            characters[guild][channel][user]["as"] = random_character['name']
-
-            embed = discord.Embed(description="{} unregistered, now speaking as {}.\n"
-                                              "To get a list of available characters in the channel call:\n"
-                                              "`!list @username`"
-                                  .format(character_name, random_character['name']),
-                                  color=int("0x{}".format(random_character['color']), 16))
-            embed.set_thumbnail(url=random_character['portrait'])
-            embed.set_author(name=random_character['name'])  # icon_url=character['portrait']
-
-            await ctx.message.author.send(embed=embed, delete_after=60)
-    except KeyError:
-        await ctx.message.author.send("This character is not registered on {}.\n"
-                                      "To get a list of available characters in the channel call: `!list`"
-                                      .format(ctx.message.channel.name), delete_after=60)
-    await ctx.message.delete()
-
+    as_character = _character_db[guild][channel][str(interaction.user.id)]
+    character = as_character["characters"][as_character['as']]
+    embed = discord.Embed(description="", color=int(f"0x{character['color']}", 16))
+    embed.set_thumbnail(url=character['portrait'])
+    embed.set_author(name=f"{character['name']} is now active.")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
     with open('characters.json', 'w') as fp:
-        json.dump(characters, fp)
-    print('Character Database Updated!')
-    print(json.dumps(characters, indent=2))
-    print()
+        json.dump(_character_db, fp)
 
 
-@bot.command(name='as')
-async def speak_as(ctx, character_name):
-    guild = str(ctx.guild.id)
-    channel = str(ctx.message.channel.id)
-    user = str(ctx.message.author.id)
-    try:
-        characters[guild][channel][user]['as'] = characters[guild][channel][user]['characters'][character_name]['name']
-    except KeyError:
-        await ctx.message.author.send("This character is not registered on {}.\n"
-                                      "To get a list of available characters in the channel call: `!list`"
-                                      .format(ctx.message.channel.name), delete_after=60)
-    await ctx.message.delete()
-
-    with open('characters.json', 'w') as fp:
-        json.dump(characters, fp)
-
-
-@bot.command(name='activate')
-async def activate(ctx):
-    guild = str(ctx.guild.id)
-    channel = str(ctx.message.channel.id)
-    user = str(ctx.message.author.id)
-    try:
-        characters[guild][channel][user]['active'] = True
-    except KeyError:
-        await ctx.message.author.send("This user has no characters registered on {}."
-                                      .format(ctx.message.channel.name), delete_after=60)
-    await ctx.message.delete()
+colors = {
+    "mint": "00C09A",
+    "teal": "008369",
+    "green": "00D166",
+    "dark green": "008E44",
+    "blue": "0099E1",
+    "dark blue": "006798",
+    "purple": "A652BB",
+    "dark purple": "7A2F8F",
+    "pink": "FD0061",
+    "dark pink": "BC0057",
+    "yellow": "F8C300",
+    "orange": "E67E22",
+    "brown": "a15313",
+    "red": "F93A2F",
+    "dark red": "A62019",
+    "light grey": "91A6A6",
+    "grey": "597E8D",
+    "dark grey": "4E6F7B",
+}
 
 
-@bot.command(name='deactivate')
-async def deactivate(ctx):
-    guild = str(ctx.guild.id)
-    channel = str(ctx.message.channel.id)
-    user = str(ctx.message.author.id)
-    try:
-        characters[guild][channel][user]['active'] = False
-    except KeyError:
-        await ctx.message.author.send("This user has no characters registered on {}."
-                                      .format(ctx.message.channel.name), delete_after=60)
-    await ctx.message.delete()
+def check_color(color):
+    if color in colors:
+        color = colors[color]
+    else:
+        if color.startswith("#"):
+            color = color[1:]
+        if len(color) != 6 or color.lower() == "2f3136":
+            h, s, l = random.random(), random.uniform(0.5, 0.7), random.uniform(0.5, 0.7)
+            r, g, b = [int(256 * i) for i in colorsys.hls_to_rgb(h, l, s)]
+            color = "{0:02x}{1:02x}{2:02x}".format(r, g, b)
+    return color
 
 
-@bot.command(name='ooc')
-async def ooc(ctx, arg1):
-    pass
+def setup_user(guild, channel, user):
+    if channel not in _character_db[guild]:
+        _character_db[guild][channel] = {}
 
+    if user not in _character_db[guild][channel]:
+        _character_db[guild][channel][user] = {}
+        _character_db[guild][channel][user]['characters'] = {}
+        _character_db[guild][channel][user]['npcs'] = {}
 
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, CommandNotFound):
-        return
-    raise error
-
-
-@bot.listen()
-async def on_message(message):
-    if not message.author.bot:
-        if not message.content.startswith("!"):
-            guild = str(message.guild.id)
-            channel = str(message.channel.id)
-            user = str(message.author.id)
-
-            try:
-                user_data = characters[guild][channel][user]
-                speak_as = user_data['as']
-                character = user_data['characters'][speak_as]
-
-                if user_data['active']:
-                    embed = discord.Embed(description=message.content, color=int("0x{}".format(character['color']), 16))
-
-                    embed.set_thumbnail(url=character['portrait'])
-                    embed.set_author(name=character['name'])  # icon_url=character['portrait']
-
-                    await message.delete()
-                    if len(message.content) > 0:
-                        await message.channel.send(embed=embed)
-
-                    for attachment in message.attachments:
-                        embed = discord.Embed(color=int("0x{}".format(character['color']), 16))
-                        embed.set_image(url=attachment.proxy_url)
-                        embed.set_author(name=character['name'])
-                        await message.channel.send(embed=embed)
-
-                    await bot.process_commands(message)
-            except KeyError:
-                pass
-
-        if message.content.startswith("!npc"):
-            msg = message.content.split(" ")
-            npc = " ".join(msg[1].split('_'))
-            embed = discord.Embed(description=" ".join(msg[2:]))
-
-            # embed.set_thumbnail(url=character['portrait'])
-            embed.set_author(name=npc)  # icon_url=character['portrait']
-
-            await message.delete()
-            await message.channel.send(embed=embed)
-            await bot.process_commands(message)
-
-
-@bot.command(name='purge')
-async def purge(ctx):
-    if ctx.guild is None:
-        async for message in ctx.message.channel.history(limit=100):
-            if message.author.id == bot.user.id:
-                await message.delete()
 
 bot.run(TOKEN)
